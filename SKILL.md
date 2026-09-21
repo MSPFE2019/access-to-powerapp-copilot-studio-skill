@@ -51,16 +51,38 @@ rule), relationships (PK/FK, cascade rules), indexes/unique constraints,
 lookup fields, query SQL text, and an inventory of forms/reports/macros/VBA
 modules.
 
-- If the `.accdb` file is available (Windows + Access/ODBC driver, or
-  `mdbtools` cross-platform), run:
-  ```bash
-  python scripts/extract_schema.py "C:\path\to\database.accdb" --out schema.json
-  ```
-  This produces `schema.json` — the working document for every later step.
-- VBA/macros are not exposed via ODBC; inspect them in the Access VBA editor
-  (Alt+F11) or via `Application.SaveAsText`, or have the user paste the logic.
-- If the file isn't available, ask the user to export/describe table
-  structures, relationships, and the business logic behind key forms/macros.
+**Copilot Studio agents cannot parse a binary `.accdb`/`.mdb` file from a
+chat attachment directly** — chat file ingestion extracts text/OOXML
+content, not proprietary Access binary structures. Never fabricate table,
+column, or relationship details when a file can't be read; treat that as a
+hard stop, not something to guess around.
+
+There are two supported ways to get a real schema:
+
+1. **Copilot Studio (recommended for this skill's primary scenario):** wire
+   up the **"Extract Access Schema"** Power Automate flow, which forwards
+   the attached file to an Azure Function that runs `pyodbc`/`mdbtools`
+   server-side and returns a `schema.json`-shaped result. See
+   `reference/copilot-studio-integration.md` and `azure-function/` for the
+   full setup. The agent must call this tool for any attached `.accdb`/
+   `.mdb` file — it must not attempt to read the file itself, and must not
+   invent placeholder schema data if the tool errors or returns no tables.
+2. **Local/CLI use (when working directly in a coding session, not through
+   Copilot Studio):** if the `.accdb` file and a Windows + Access/ODBC
+   driver (or `mdbtools` cross-platform) are available, run:
+   ```bash
+   python scripts/extract_schema.py "C:\path\to\database.accdb" --out schema.json
+   ```
+   This produces the same `schema.json` shape as the Azure Function.
+
+In both cases:
+- VBA/macros are not exposed via ODBC or mdbtools; inspect them in the
+  Access VBA editor (Alt+F11) or via `Application.SaveAsText`, or have the
+  user paste the logic. Neither extraction path recovers VBA/macro code —
+  always say so explicitly rather than guessing at form logic.
+- If no extraction path is available and the file can't be provided, ask the
+  user to export/describe table structures, relationships, and the business
+  logic behind key forms/macros instead of assuming a "typical" schema.
 
 ## Step 2 — Design Dataverse tables
 
@@ -174,12 +196,25 @@ project layout, and generated data-source/model pattern. Key points:
 - `reference/gcc-considerations.md` — GCC/GCC High constraints and checklist.
 - `reference/code-app-architecture.md` — Power Apps Code App + Dataverse
   scaffolding via `pac code`.
-- `scripts/extract_schema.py` — pyodbc-based schema extractor.
+- `reference/copilot-studio-integration.md` — how to wire a Copilot Studio
+  agent to the Azure Function + Power Automate flow so attached `.accdb`
+  files are actually parsed instead of guessed at.
+- `azure-function/function_app.py` — HTTP-triggered Azure Function that
+  extracts schema server-side (pyodbc primary, mdbtools fallback), called
+  by the Power Automate flow.
+- `scripts/extract_schema.py` — local/CLI pyodbc-based schema extractor,
+  used outside of Copilot Studio (e.g., in a coding session).
 
 ## Notes for the agent
 
 - Always produce a `schema.json` (or equivalent) before proposing table
-  designs — never guess at the Access schema.
+  designs — never guess at the Access schema. In Copilot Studio, this means
+  calling the "Extract Access Schema" tool on any attached `.accdb`/`.mdb`
+  file, not reading the attachment directly.
+- If schema extraction fails or returns no tables, tell the user exactly
+  what failed and ask them to confirm/retry the file. Do not fabricate a
+  "typical" or placeholder schema as a substitute — that produces a report
+  that looks authoritative but is fiction.
 - Always confirm GCC vs. GCC High vs. DoD, and confirm the target Dataverse
   environment, before generating a full migration plan — these are
   foundational and hard to reverse.
